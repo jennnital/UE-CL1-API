@@ -1,4 +1,4 @@
-# Unreal-CL1-API
+# UE-CL1-API: Unreal Engine API for Brains-on-Chips (CL-1)
 
 **A closed-loop UDP interface between Cortical Labs' CL1 biocomputer and Unreal Engine** —
 receive living-neuron spikes as gameplay events, send electrical stimulation back as feedback.
