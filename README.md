@@ -1,175 +1,114 @@
-# Unreal-CL1-API
+# ue-cl1-api — Unreal Engine API for Brains-on-Chips (CL-1)
 
-**A closed-loop UDP interface between Cortical Labs' CL1 biocomputer and Unreal Engine** —
-receive living-neuron spikes as gameplay events, send electrical stimulation back as feedback.
+A closed-loop UDP interface between Cortical Labs' CL1 biocomputer and Unreal Engine — receive living-neuron spikes as gameplay events, send electrical stimulation back as feedback.
 
-This is the reference implementation of the pipeline described in:
-
-> **Assembloid Agency: Unreal Engine API for brain-on-a-chip platforms**
-> Jenn Leung, Chloe Loewith — *NeurIPS 2025 Creative AI Track*
-> 📄 Paper / forum: https://openreview.net/forum?id=BroaBkQAGa
-> 📥 PDF: https://openreview.net/pdf?id=BroaBkQAGa
-
-The two UDP streams mirror Figure 1 of the paper:
+This repo contains a UE plugin that builds a UDP bridge between **Unreal Engine** and a **CL1**, implementing the closed loop from *Assembloid Agency*
+(Leung & Loewith, NeurIPS 2025 Creative AI Track) on top of the official CL1
+spike firehose and the stimulation contract in §6 of arXiv:2602.11632.
 
 ```
-   neural spikes  →  game state     (CL1  → Unreal,  port 12345)
-   game rewards   →  neural stim     (Unreal → CL1,   port 12346)
+   substrate ──(spike firehose, port 12345)──▶  Unreal Engine
+   substrate ◀──(AA control,    port 12346)──   Unreal Engine
 ```
 
-The spike direction is **byte-compatible with Cortical Labs' own CL-01 / CL-01A
-examples**, so the Unreal listener also works against their stock notebooks and against
-the NEST simulator.
+| File | Runs on | Role |
+|------|---------|------|
+| `bridge.py` | CL1 / SDK host (or `--selftest` anywhere) | runs `neurons.loop`, streams spikes, applies AA control packets via §6 calls, enforces the safety envelope |
+| `Plugins/UeCl1Api` | your Unreal project | receives spikes, exposes the Assembloid §3.3 API to C++/Blueprint |
+| `PROTOCOL.md` | — | wire spec (yours) |
+| `CROSSCHECK.md` | — | how PROTOCOL.md maps to §6 + what changed |
 
----
+## Data types (no int16 anywhere)
 
-## Contents
+- Spike **timestamp**: `uint64` LE, a **frame index** (40 µs/frame). Seconds =
+  frame / 25000. *Not* milliseconds.
+- Spike **channel**: `uint8`.
+- HDF5 raw samples: `int64` `T×C` + `uV_per_sample_unit`. Live `Spike.samples`:
+  float **µV**. The firehose carries no voltage.
 
-| Path | Runs where | Role |
-|------|-----------|------|
-| `assembloid_cl_bridge.py` | on the **CL1** (or anywhere with `--simulate`) | runs the CL-API loop, streams spikes out, applies incoming stim |
-| `AssembloidAgency/` | in **Unreal Engine** (plugin) | receives spikes as events, sends stim from gameplay |
-| `PROTOCOL.md` | — | the shared UDP wire-format contract |
+## Wire protocol
 
----
+Spike packet (substrate→UE) is byte-compatible with the official receiver:
+`<Q timestamp>` + one `uint8` per channel. Two modes: `per_tick` (default) and
+`per_spike` (preserves each spike's own timestamp).
 
-## Part 1 — Python bridge (CL1 side)
+Control packet (UE→substrate) is the Assembloid `'AA'` header `'<2sBBBBHfHH'`
+(16 bytes) + channel list. Implemented message types:
 
-Built directly on the CL-API (`cl.open()`, `neurons.loop()`, `neurons.stim()`,
-`cl.StimDesign`, `cl.BurstDesign`, `cl.ChannelSet`). Standard library only.
+- `1 STIM` — biphasic stim / burst. `flags` bit0 charge-balanced (default),
+  bit1 interrupt-then-stim.
+- `2 INTERRUPT` — clean stop on the listed channels.
+- `4 RECORD` — start/stop CL1-side HDF5 recording (`flags` bit0 = start).
 
-```bash
-# On the CL1 device, streaming to the PC running Unreal at 192.168.1.50
-python assembloid_cl_bridge.py --unreal-ip 192.168.1.50
+See `CROSSCHECK.md` for the §6 mapping and the v2/v3 rationale.
 
-# Develop the Unreal side with no hardware (synthetic Poisson spikes):
-python assembloid_cl_bridge.py --simulate --unreal-ip 127.0.0.1
-```
-
-Key options (`--help` for all): `--unreal-ip/--unreal-port` (spike destination),
-`--stim-listen-port` (incoming stim), `--tick-rate` (default 25000, the CL max),
-`--strict-timestamps` (one packet per spike), plus the safety limits below.
-
-**Architecture.** All hardware access is single-threaded: the CL-API loop both sends
-spikes and is the only caller of `neurons.stim()`. A background thread reads the stim
-socket, validates each command, and enqueues it; the loop drains that queue every tick.
-
-**Safety envelope.** Out-of-range stim commands are logged and dropped — never silently
-altered. The defaults are deliberately conservative; set them to match your own lab/IRB
-protocol (`--max-amplitude-ua`, `--max-pulse-us`, `--max-pulses`, `--max-freq-hz`,
-`--max-channel`). This is the practical counterpart to the paper's note (§5) that
-overstimulation affects substrate longevity.
-
----
-
-## Part 2 — Unreal Engine plugin
-
-Depends on getnamo's **UDP-Unreal** plugin (it embeds `FUDPNative` directly).
-
-### Install
-
-1. Install **UDP-Unreal** into your project's `Plugins/` folder
-   (https://github.com/getnamo/UDP-Unreal). Its module is `UDPWrapper`.
-2. Copy the `AssembloidAgency/` folder into your project's `Plugins/` folder.
-3. Enable both plugins. A C++ project is required (the plugin links `UDPWrapper`);
-   if yours is Blueprint-only, add any C++ class once to convert it to mixed.
-4. Rebuild.
-
-> The `.uplugin` lists a dependency named `UDPWrapper`; if your installed UDP-Unreal
-> `.uplugin` uses a different name, match it there.
-
-### Use (Blueprint or C++)
-
-Add an **Assembloid Agency** component to any Actor (e.g. a `BP_NeuronBridge` placed in
-your level). Set `CL Device IP` to the CL1's address; leave ports at 12345 / 12346 to
-match the bridge defaults. With `Auto Connect On Begin Play` ticked it connects on play.
-
-**Receiving spikes** — bind the `On Spikes Received` event. Each fires with an
-`FCLSpikeEvent` (`Timestamp`, `Channels`, `SourceIP`) on the game thread. You can also
-poll `Get Spike Rate Hz(Channel)` and `Get Total Spike Count(Channel)`.
-
-**Sending stimulation:**
+## Assembloid §3.3 API (C++ & Blueprint)
 
 ```cpp
-// Encode target proximity as stim frequency (paper §3.4): near = 100 Hz burst.
-Bridge->SendStimulus(
-    /*Channels*/    {27, 28, 35, 36},
-    /*FrequencyHz*/ 100,
-    /*PulseWidthUs*/180,
-    /*AmplitudeUA*/ 1.5f,
-    /*DurationMs*/  200);   // → 20 pulses at 100 Hz
+UCl1BridgeSubsystem* CL1 = GetGameInstance()->GetSubsystem<UCl1BridgeSubsystem>();
+CL1->StartReceiver(12345);                              // spike firehose in
+CL1->ConfigureControlTarget(TEXT("192.168.1.51"), 12346); // control out
+CL1->OnSpike.AddDynamic(this, &AMyPawn::HandleSpike);
 
-Bridge->SendSinglePulse({27}, 180, 1.5f);   // one charge-balanced biphasic pulse
+// Stimulation: channels, FreqHz, PulseWidthUs, AmplitudeUa, DurationMs
+CL1->SendStimulus({20,42}, 100.f, 200, 2.0f, 50.f, /*bInterruptFirst*/true);
+
+// Reinforcement (DishBrain-style; reward == stimulation)
+CL1->SendRewardSignal(/*bPositive*/true, {18,19});
+
+// Spike-to-axis mapping for 3D navigation (Assembloid §3.4)
+float Fwd = CL1->GetSpikeRateHz(/*Channel*/12, /*WindowSeconds*/0.25f);
+
+// Recording: authoritative HDF5 on the CL1 (§6.4), optional UE-side CSV
+CL1->RecordSessionData(true, /*bAlsoLogInUE*/true);
+// ... later ...
+CL1->RecordSessionData(false);
+CL1->ExportToCSV(FPaths::ProjectSavedDir() / TEXT("spikes.csv"));
 ```
 
-`SendStimulus` maps to a `cl.StimDesign` (charge-balanced biphasic) plus a
-`cl.BurstDesign` on the bridge side. `DurationMs` becomes a pulse count as
-`round(DurationMs/1000 × FrequencyHz)`.
+`SendStimulus` converts duration→pulses: `NumPulses = max(1, round(ms/1000 *
+FreqHz))`, then the bridge builds the cathodic-first
+`StimDesign(pw,-amp,pw,+amp)` (+ `BurstDesign` for bursts) per §6.1.
 
-### Wiring it into the paper's templates
-
-- **3D navigation / FPS (§3.4):** map `GetSpikeRateHz(channel)` to pawn axis input;
-  call `SendStimulus` with proximity-encoded frequency for sensory feedback.
-- **Learning Agents:** read spike rates in your agent's observation step and issue
-  `SendStimulus` as the reward/feedback action, keeping UE `Learning Agents` as the RL
-  harness around this transport layer.
-- **NEST instead of CL1:** point the bridge's sockets at a NEST UDP script using the same
-  `PROTOCOL.md` formats; the Unreal side is unchanged.
-
----
-
-## Quick local test (no hardware)
+## Running
 
 ```bash
-# Terminal 1 — simulated bridge
-python assembloid_cl_bridge.py --simulate --unreal-ip 127.0.0.1
+# 1. Validate the whole pipe with synthetic spikes (no SDK/hardware):
+python3 bridge.py --selftest --ue-host 127.0.0.1 --ue-port 12345
 
-# Terminal 2 — Play in Editor with the component pointed at 127.0.0.1.
-# You should see On Spikes Received firing; SendStimulus calls print on the bridge.
+# 2. Against CL1 / simulator, bidirectional, with a safety envelope:
+python3 bridge.py --ue-host 192.168.1.50 --ue-port 12345 \
+                  --control-listen-port 12346 \
+                  --max-amp 10 --max-channel 63 --rate 1000
 ```
 
----
+The safety envelope (Assembloid §5) rejects-and-drops out-of-range commands
+(amplitude, pulse width, pulse count, frequency, channel) — it never silently
+alters them. Defaults are conservative; set them to your IRB/lab protocol. Note
+the channel ceiling: `PROTOCOL.md` uses 0–59, but the CL1 reference is 64
+channels (0–63) — use `--max-channel` to match your MEA.
 
-## Repository layout
+## Backend-agnostic (Assembloid §3.1)
+
+UE only sees UDP, so the same plugin drives a CL1 (via `bridge.py`) or a NEST /
+SNN / EEG stand-in that speaks the same firehose + AA convention — identical
+state/reward mappings across substrates, per the paper's parallel-configuration
+design.
+
+## Files
 
 ```
-PROTOCOL.md                       wire-format contract (both directions)
-assembloid_cl_bridge.py           CL1-side bridge (+ simulator)
-AssembloidAgency/                 Unreal Engine plugin
-  AssembloidAgency.uplugin
-  Source/AssembloidAgency/
-    AssembloidAgency.Build.cs
-    Public/AssembloidAgencyTypes.h
-    Public/AssembloidAgencyComponent.h
-    Private/AssembloidAgency.cpp
-    Private/AssembloidAgencyComponent.cpp
+ue-cl1-api/
+├── bridge.py
+├── PROTOCOL.md
+├── CROSSCHECK.md
+├── README.md
+└── Plugins/UeCl1Api/
+    ├── UeCl1Api.uplugin
+    └── Source/UeCl1Api/
+        ├── UeCl1Api.Build.cs
+        ├── Private/UeCl1Api.cpp
+        ├── Private/Cl1BridgeSubsystem.cpp
+        ├── Public/Cl1BridgeSubsystem.h
+        └── Public/Cl1SpikeTypes.h
 ```
-
----
-
-## Acknowledgements & related work
-
-- Cortical Labs **CL-API** documentation: https://github.com/Cortical-Labs/cl-api-doc
-- getnamo **UDP-Unreal**: https://github.com/getnamo/UDP-Unreal
-- Leung, Loewith & Frisch (2025), *Organoid Array Computing: The Design Space of
-  Organoid Intelligence*, Antikythera Digital Journal.
-
-## Citing
-
-If you use this code, please cite the paper:
-
-```bibtex
-@inproceedings{leung2025assembloid,
-  title     = {Assembloid Agency: Unreal Engine API for brain-on-a-chip platforms},
-  author    = {Leung, Jenn and Loewith, Chloe},
-  booktitle = {The Thirty-ninth Annual Conference on Neural Information
-               Processing Systems, Creative AI Track},
-  year      = {2025},
-  url       = {https://openreview.net/forum?id=BroaBkQAGa}
-}
-```
-
-## License
-
-Code released under the **MIT License** (see `LICENSE`), compatible with the MIT-licensed
-UDP-Unreal dependency. The accompanying paper is licensed CC BY 4.0.

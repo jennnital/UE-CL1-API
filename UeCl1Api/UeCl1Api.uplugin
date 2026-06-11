@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "UE CL1 API",
+	"Description": "UDP bridge between an Unreal Engine project and a Cortical Labs CL1 biocomputer. Receives the spike firehose (CL-01A Appendix A wire format) and sends stimulation requests.",
+	"Category": "Hardware",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "UeCl1Api",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
