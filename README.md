@@ -19,7 +19,7 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 | `PROTOCOL.md` | — | wire spec (yours) |
 | `CROSSCHECK.md` | — | how PROTOCOL.md maps to §6 + what changed |
 
-## Data types (no int16 anywhere)
+## Data types 
 
 - Spike **timestamp**: `uint64` LE, a **frame index** (40 µs/frame). Seconds =
   frame / 25000. *Not* milliseconds.
