@@ -1,4 +1,6 @@
-# ue-cl1-api — Unreal Engine API for Brains-on-Chips (CL-1)
+
+# UE-CL1-API: Unreal Engine API for Brains-on-Chips (CL-1)
+
 
 A closed-loop UDP interface between Cortical Labs' CL1 biocomputer and Unreal Engine — receive living-neuron spikes as gameplay events, send electrical stimulation back as feedback.
 
@@ -40,7 +42,7 @@ Control packet (UE→substrate) is the Assembloid `'AA'` header `'<2sBBBBHfHH'`
 - `2 INTERRUPT` — clean stop on the listed channels.
 - `4 RECORD` — start/stop CL1-side HDF5 recording (`flags` bit0 = start).
 
-See `CROSSCHECK.md` for the §6 mapping and the v2/v3 rationale.
+See `PLUGINNOTES.md` for the §6 mapping and the v2/v3 rationale.
 
 ## Assembloid §3.3 API (C++ & Blueprint)
 
