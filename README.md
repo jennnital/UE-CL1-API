@@ -19,10 +19,10 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 | File | Runs on | Role |
 |------|---------|------|
 | `bridge.py` | CL1 / SDK host (or `--selftest` anywhere) | (1) runs `neurons.loop`, streams spikes
-(2) `apply_command` applies AA control packets|
+||(2) `apply_command` applies AA control packets|
 | `Plugins/UeCl1Api` | your Unreal project | (1)receives and parses spikes and channels via UDP
-(2) exposes the Assembloid Agency API to C++/Blueprint
-(3) `sendstimulus` packs stimulus and sends to bridge.py |
+||(2) exposes the Assembloid Agency API to C++/Blueprint
+||(3) `sendstimulus` packs stimulus and sends to bridge.py |
 | `PROTOCOL.md` | — | wire spec (yours) |
 | `PLUGINNOTES.md` | — | how PROTOCOL.md maps to §6 + what changed |
 
