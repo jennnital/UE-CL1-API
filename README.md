@@ -7,6 +7,10 @@ This repo contains a UE plugin that builds a UDP bridge between **Unreal Engine*
 (Leung & Loewith, NeurIPS 2025 Creative AI Track) on top of the official CL1
 spike firehose and the stimulation design outlined in §6 of [*CL API*](https://arxiv.org/abs/2602.11632) (Cortical Labs, 2026).
 
+## Closed-loop API design:
+
+![Proposed API](uecl1apidiagram.png)
+
 ```
    CL1 ──(spike firehose, port 12345)──▶  Unreal Engine
    CL1 ◀──(stimulation/ AA control, port 12346)──   Unreal Engine
@@ -15,7 +19,7 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 | File | Runs on | Role |
 |------|---------|------|
 | `bridge.py` | CL1 / SDK host (or `--selftest` anywhere) | runs `neurons.loop`, streams spikes, applies AA control packets via §6 calls, enforces the safety envelope |
-| `Plugins/UeCl1Api` | your Unreal project | receives spikes, exposes the Assembloid §3.3 API to C++/Blueprint |
+| `Plugins/UeCl1Api` | your Unreal project | receives spikes, exposes the Assembloid Agency API to C++/Blueprint |
 | `PROTOCOL.md` | — | wire spec (yours) |
 | `PLUGINNOTES.md` | — | how PROTOCOL.md maps to §6 + what changed |
 
@@ -43,7 +47,7 @@ Control packet (UE→substrate) is the Assembloid `'AA'` header `'<2sBBBBHfHH'`
 
 See `PLUGINNOTES.md` for the §6 mapping and the v2/v3 rationale.
 
-## Assembloid §3.3 API (C++ & Blueprint)
+## Assembloid API (C++ & Blueprint)
 
 ```cpp
 UCl1BridgeSubsystem* CL1 = GetGameInstance()->GetSubsystem<UCl1BridgeSubsystem>();
