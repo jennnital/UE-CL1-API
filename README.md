@@ -23,7 +23,7 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 | `Plugins/UeCl1Api` | your Unreal project | (1) receives and parses spikes and channels via UDP
 |||(2) exposes the Assembloid Agency API to C++/Blueprint
 |||(3) `sendstimulus` packs stimulus and sends to bridge.py |
-| `PROTOCOL.md` | — | wire spec (yours) |
+| `PROTOCOL.md` | — | wire spec of `.uplugin` |
 | `PLUGINNOTES.md` | — | how PROTOCOL.md maps to §6 + what changed |
 
 ## Data types 
