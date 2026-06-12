@@ -1,16 +1,15 @@
 
 # UE-CL1-API: Unreal Engine API for Brains-on-Chips (CL-1)
 
+A closed-loop UDP interface between Cortical Labs' CL1 biocomputer and Unreal Engine — receive living-neuron spikes as gameplay events, send 'assembloid agency(AA)' electrical stimulation back as feedback.
 
-A closed-loop UDP interface between Cortical Labs' CL1 biocomputer and Unreal Engine — receive living-neuron spikes as gameplay events, send electrical stimulation back as feedback.
-
-This repo contains a UE plugin that builds a UDP bridge between **Unreal Engine** and a **CL1**, implementing the closed loop from *Assembloid Agency*
+This repo contains a UE plugin that builds a UDP bridge between **Unreal Engine** and a **CL1**, implementing the closed loop from [*Assembloid Agency*](https://openreview.net/forum?id=BroaBkQAGa)
 (Leung & Loewith, NeurIPS 2025 Creative AI Track) on top of the official CL1
-spike firehose and the stimulation contract in §6 of arXiv:2602.11632.
+spike firehose and the stimulation design outlined in §6 of [*CL API*](https://arxiv.org/abs/2602.11632) (Cortical Labs, 2026).
 
 ```
-   substrate ──(spike firehose, port 12345)──▶  Unreal Engine
-   substrate ◀──(AA control,    port 12346)──   Unreal Engine
+   CL1 ──(spike firehose, port 12345)──▶  Unreal Engine
+   CL1 ◀──(stimulation/ AA control, port 12346)──   Unreal Engine
 ```
 
 | File | Runs on | Role |
@@ -20,7 +19,7 @@ spike firehose and the stimulation contract in §6 of arXiv:2602.11632.
 | `PROTOCOL.md` | — | wire spec (yours) |
 | `CROSSCHECK.md` | — | how PROTOCOL.md maps to §6 + what changed |
 
-## Data types (no int16 anywhere)
+## Data types 
 
 - Spike **timestamp**: `uint64` LE, a **frame index** (40 µs/frame). Seconds =
   frame / 25000. *Not* milliseconds.
