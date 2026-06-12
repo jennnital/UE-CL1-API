@@ -17,7 +17,7 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 | `bridge.py` | CL1 / SDK host (or `--selftest` anywhere) | runs `neurons.loop`, streams spikes, applies AA control packets via §6 calls, enforces the safety envelope |
 | `Plugins/UeCl1Api` | your Unreal project | receives spikes, exposes the Assembloid §3.3 API to C++/Blueprint |
 | `PROTOCOL.md` | — | wire spec (yours) |
-| `CROSSCHECK.md` | — | how PROTOCOL.md maps to §6 + what changed |
+| `PLUGINNOTES.md` | — | how PROTOCOL.md maps to §6 + what changed |
 
 ## Data types 
 
