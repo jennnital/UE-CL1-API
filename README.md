@@ -18,8 +18,7 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 
 | File | Runs on | Role |
 |------|---------|------|
-| `bridge.py` | CL1 / SDK bridge (or `--selftest` anywhere) | (1) runs `neurons.loop`, streams spikes
-|||(2) `apply_command` applies control packets onto CL1 |
+| `bridge.py` | CL1 / SDK bridge (or `--selftest` anywhere) | (1) runs `neurons.loop`, streams spikes <br/>(2) `apply_command` applies control packets onto CL1 |
 | `UeCl1Api/` | Unreal Engine | **UCl1BridgeSubsystem** — handles UDP bridge + Assembloid Agency API<br/>(1) **Connection**: `StartReceiver`, `StopReceiver`, `ConfigureControlTarget`<br/>(2) **Stimulation**: `SendStimulation`, `SendStimPlan`, `SendRewardSignal`, `InterruptStim`<br/>(3) **Recording**: `RecordSessionData`, `ExportToCSV` (CL1-side HDF5 + UE CSV)<br/>(4) **Readback**: `GetSpikeResponse`, `GetSpikeRateHz`, `GetChannelRates`<br/>(5) **Events**: `OnSpike`, `OnSpikeInChannel`, `OnSpikeBatch` (C++ & Blueprint) |
 
 ## Assembloid API (C++ & Blueprint)
