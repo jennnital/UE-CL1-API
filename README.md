@@ -22,7 +22,7 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 |||(2) `apply_command` applies AA control packets|
 | `Plugins/UeCl1Api` | your Unreal project | (1) receives and parses spikes and channels via UDP
 |||(2) exposes the Assembloid Agency API to C++/Blueprint
-|||(3) `sendstimulus` packs stimulus and sends to bridge.py |
+|||(3) `sendstimulation` and `sendstimplan` pack stimulation data and sends to bridge.py |
 
 ## Data types 
 
@@ -104,7 +104,7 @@ CL1->ConfigureControlTarget(TEXT("192.168.1.51"), 12346); // control out
 CL1->OnSpike.AddDynamic(this, &AMyPawn::HandleSpike);
 
 // Stimulation: channels, FreqHz, PulseWidthUs, AmplitudeUa, DurationMs
-CL1->SendStimulus({20,42}, 100.f, 200, 2.0f, 50.f, /*bInterruptFirst*/true);
+CL1->SendStimulation({20,42}, 100.f, 200, 2.0f, 50.f, /*bInterruptFirst*/true);
 
 // Reinforcement (DishBrain-style; reward == stimulation)
 CL1->SendRewardSignal(/*bPositive*/true, {18,19});
@@ -119,7 +119,7 @@ CL1->RecordSessionData(false);
 CL1->ExportToCSV(FPaths::ProjectSavedDir() / TEXT("spikes.csv"));
 ```
 
-`SendStimulus` converts duration→pulses: `NumPulses = max(1, round(ms/1000 *
+`SendStimulation` converts duration→pulses: `NumPulses = max(1, round(ms/1000 *
 FreqHz))`, then the bridge builds the cathodic-first
 `StimDesign(pw,-amp,pw,+amp)` (+ `BurstDesign` for bursts) per §6.1.
 
@@ -137,7 +137,7 @@ In `UE-CL1-API` folder, you will find `\Blueprints\BP_CL1BridgeManager.uasset` w
 ![SendStim](docs/SendStimulation.png)
 
 `SendStimPlan` – create and send a grouped stimulation plan that delivers multiple channel/burst patterns atomically.
-![SendStim](docs/SendStimuPlan.png)
+![SendStimPlan](docs/SendStimPlan.png)
 
 
 
