@@ -18,11 +18,125 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 
 | File | Runs on | Role |
 |------|---------|------|
-| `bridge.py` | CL1 / SDK host (or `--selftest` anywhere) | (1) runs `neurons.loop`, streams spikes
-|||(2) `apply_command` applies AA control packets|
-| `Plugins/UeCl1Api` | your Unreal project | (1) receives and parses spikes and channels via UDP
-|||(2) exposes the Assembloid Agency API to C++/Blueprint
-|||(3) `sendstimulation` and `sendstimplan` pack stimulation data and sends to bridge.py |
+| `bridge.py` | CL1 / SDK bridge (or `--selftest` anywhere) | (1) runs `neurons.loop`, streams spikes
+|||(2) `apply_command` applies control packets onto CL1 |
+| `UeCl1Api/` | Unreal Engine | **UCl1BridgeSubsystem** — handles UDP bridge + Assembloid Agency API<br/>(1) **Connection**: `StartReceiver`, `StopReceiver`, `ConfigureControlTarget`<br/>(2) **Stimulation**: `SendStimulation`, `SendStimPlan`, `SendRewardSignal`, `InterruptStim`<br/>(3) **Recording**: `RecordSessionData`, `ExportToCSV` (CL1-side HDF5 + UE CSV)<br/>(4) **Readback**: `GetSpikeResponse`, `GetSpikeRateHz`, `GetChannelRates`<br/>(5) **Events**: `OnSpike`, `OnSpikeInChannel`, `OnSpikeBatch` (C++ & Blueprint) |
+
+## Assembloid API (C++ & Blueprint)
+### Functionality
+This plugin exposes a UE `UCl1BridgeSubsystem` that handles the CL1 ↔ Unreal UDP
+bridge and the Assembloid Agency API surface.
+
+- Connection
+  - `StartReceiver(port, bindAddress)` starts the UDP spike listener for CL1
+    spike packets.
+  - `StopReceiver()` stops the listener and frees the socket.
+  - `ConfigureControlTarget(host, port)` sets the bridge.py / CL1 control target
+    for outbound stimulation and recording commands.
+
+- Stimulation
+  - `SendStimulation(channels, FreqHz, PulseWidthUs, AmplitudeUa, DurationMs,
+    bInterruptFirst)` sends a biphasic stimulation command to the bridge.
+  - `SendStimPlan(groups, bInterruptFirst)` sends an atomic multi-group stim plan
+    for coordinated burst patterns across channels.
+  - `SendRewardSignal(bPositive, RewardChannels, FreqHz, PulseWidthUs,
+    AmplitudeUa, DurationMs)` is a reward-style wrapper: positive sends a burst,
+    negative acts like an interrupt.
+  - `InterruptStim(channels)` cleanly stops ongoing stimulation on selected
+    channels.
+
+- Recording
+  - `RecordSessionData(bStart, bAlsoLogInUE)` toggles CL1-side HDF5 recording
+    over the bridge using the RECORD command.
+  - `ExportToCSV(FilePath)` writes the UE-side spike log to CSV for quick
+    debugging and offline analysis.
+
+- Readback and visualization
+  - `GetSpikeResponse(channel)` returns the most recent spike frame index for a
+    channel.
+  - `GetSpikeRateHz(channel, WindowSeconds)` computes the firing rate over a
+    recent time window.
+  - `GetChannelRates(WindowSeconds)` returns a rate snapshot for all channels.
+
+- Events
+  - `OnSpike` fires once per received spike.
+  - `OnSpikeInChannel` fires once per received spike and includes the specific
+    channel number, making it easy to bind channel-specific Blueprint handlers.
+  - `OnSpikeBatch` fires once per received packet with all spikes in that packet.
+
+### C++
+```cpp
+UCl1BridgeSubsystem* CL1 = GetGameInstance()->GetSubsystem<UCl1BridgeSubsystem>();
+CL1->StartReceiver(12345);                              // spike firehose in
+CL1->ConfigureControlTarget(TEXT("192.168.1.51"), 12346); // control out
+CL1->OnSpike.AddDynamic(this, &AMyPawn::HandleSpike);
+
+// Stimulation: channels, FreqHz, PulseWidthUs, AmplitudeUa, DurationMs
+CL1->SendStimulation({20,42}, 100.f, 200, 2.0f, 50.f, /*bInterruptFirst*/true);
+
+// Reinforcement (DishBrain-style; reward == stimulation)
+CL1->SendRewardSignal(/*bPositive*/true, {18,19});
+
+// Spike-to-axis mapping for 3D navigation (Assembloid §3.4)
+float Fwd = CL1->GetSpikeRateHz(/*Channel*/12, /*WindowSeconds*/0.25f);
+
+// Recording: authoritative HDF5 on the CL1 (§6.4), optional UE-side CSV
+CL1->RecordSessionData(true, /*bAlsoLogInUE*/true);
+// ... later ...
+CL1->RecordSessionData(false);
+CL1->ExportToCSV(FPaths::ProjectSavedDir() / TEXT("spikes.csv"));
+```
+
+`SendStimulation` converts duration→pulses: `NumPulses = max(1, round(ms/1000 *
+FreqHz))`, then the bridge builds the cathodic-first
+`StimDesign(pw,-amp,pw,+amp)` (+ `BurstDesign` for bursts) per §6.1.
+
+### Blueprint examples
+To run functions, you will need the `CL1BridgeSubsystem` node.
+In `UE-CL1-API` folder, you will find `\Blueprints\BP_CL1BridgeManager.uasset` which contains the following examples:
+
+`StartReceiver` – starts the UDP spike listener so Unreal can receive CL1 spikes.
+![StartReceiver](docs/StartReceiver.png)
+
+`GetChannelRates` – calculates recent firing rates for individual channels, useful for gameplay or analytics.
+![GetChannelRates](docs/GetChannelRates.png)
+
+`ConfigureControlTarget` and `SendStimulation` – configure the bridge target address and send a biphasic stimulation command back to the CL1.
+![SendStim](docs/SendStimulation.png)
+
+`SendStimPlan` – create and send a grouped stimulation plan that delivers multiple channel/burst patterns atomically.
+![SendStimPlan](docs/SendStimPlan.png)
+
+
+
+## Running
+
+```bash
+# 1. Validate the whole pipe with synthetic spikes (no SDK/hardware):
+python3 bridge.py --selftest --ue-host 127.0.0.1 --ue-port 12345
+
+# 2. Against CL1 / simulator, bidirectional, with a safety envelope:
+python3 bridge.py --ue-host 192.168.1.50 --ue-port 12345 \
+                  --control-listen-port 12346 \
+                  --max-amp 10 --max-channel 63 --rate 1000
+
+# 3. Simulate CL1
+  # Random simulation with deterministic seed
+python3 bridge.py --simulator --random-seed 42
+
+  # Replay a recording with accelerated time
+python3 bridge.py --replay-path /path/to/recording.h5 --accelerated-time
+
+  # Custom random simulation parameters
+python3 bridge.py --simulator --sample-mean 200 --spike-percentile 99.9
+```
+
+The safety envelope (Assembloid §5) rejects-and-drops out-of-range commands
+(amplitude, pulse width, pulse count, frequency, channel) — it never silently
+alters them. Defaults are conservative; set them to your IRB/lab protocol. Note
+the channel ceiling: `PROTOCOL.md` uses 0–59, but the CL1 reference is 64
+channels (0–63) — use `--max-channel` to match your MEA.
+
 
 ## Data types 
 
