@@ -35,19 +35,67 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 ## Wire protocol
 
 Spike packet (substrate→UE) is byte-compatible with the official receiver:
-`<Q timestamp>` + one `uint8` per channel. Two modes: `per_tick` (default) and
-`per_spike` (preserves each spike's own timestamp).
+`<Q timestamp>` + one `uint8` per channel. The bridge supports `per_tick`
+(default, groups channels by loop tick) and `per_spike` (preserves each spike's
+own timestamp).
 
-Control packet (UE→substrate) is the Assembloid `'AA'` header `'<2sBBBBHfHH'`
-(16 bytes) + channel list. Implemented message types:
+Control packet (UE→substrate) uses the Assembloid `AA` control header
+`'<2sBBBBHfHH'` (16 bytes) + channel list. Current version is `2` and the
+header fields are: magic, version, msg_type, flags, num_channels,
+`pulse_width_us`, `amplitude_uA`, `num_pulses`, `freq_hz`, then channels.
 
-- `1 STIM` — biphasic stim / burst. `flags` bit0 charge-balanced (default),
-  bit1 interrupt-then-stim.
+Implemented message types:
+
+- `1 STIM` — biphasic stim / burst. `flags` bit0 = charge-balanced biphasic
+  (default), bit1 = interrupt-then-stim.
 - `2 INTERRUPT` — clean stop on the listed channels.
 - `4 RECORD` — start/stop CL1-side HDF5 recording (`flags` bit0 = start).
+- `5 STIMPLAN` — multi-group atomic stimulation plan (supported by the UE plugin
+  and bridge).
 
 
 ## Assembloid API (C++ & Blueprint)
+### Functionality
+This plugin exposes a UE `UCl1BridgeSubsystem` that handles the CL1 ↔ Unreal UDP
+bridge and the Assembloid Agency API surface.
+
+- Connection
+  - `StartReceiver(port, bindAddress)` starts the UDP spike listener for CL1
+    spike packets.
+  - `StopReceiver()` stops the listener and frees the socket.
+  - `ConfigureControlTarget(host, port)` sets the bridge.py / CL1 control target
+    for outbound stimulation and recording commands.
+
+- Stimulation
+  - `SendStimulation(channels, FreqHz, PulseWidthUs, AmplitudeUa, DurationMs,
+    bInterruptFirst)` sends a biphasic stimulation command to the bridge.
+  - `SendStimPlan(groups, bInterruptFirst)` sends an atomic multi-group stim plan
+    for coordinated burst patterns across channels.
+  - `SendRewardSignal(bPositive, RewardChannels, FreqHz, PulseWidthUs,
+    AmplitudeUa, DurationMs)` is a reward-style wrapper: positive sends a burst,
+    negative acts like an interrupt.
+  - `InterruptStim(channels)` cleanly stops ongoing stimulation on selected
+    channels.
+
+- Recording
+  - `RecordSessionData(bStart, bAlsoLogInUE)` toggles CL1-side HDF5 recording
+    over the bridge using the RECORD command.
+  - `ExportToCSV(FilePath)` writes the UE-side spike log to CSV for quick
+    debugging and offline analysis.
+
+- Readback and visualization
+  - `GetSpikeResponse(channel)` returns the most recent spike frame index for a
+    channel.
+  - `GetSpikeRateHz(channel, WindowSeconds)` computes the firing rate over a
+    recent time window.
+  - `GetChannelRates(WindowSeconds)` returns a rate snapshot for all channels.
+
+- Events
+  - `OnSpike` fires once per received spike.
+  - `OnSpikeInChannel` fires once per received spike and includes the specific
+    channel number, making it easy to bind channel-specific Blueprint handlers.
+  - `OnSpikeBatch` fires once per received packet with all spikes in that packet.
+
 ### C++
 ```cpp
 UCl1BridgeSubsystem* CL1 = GetGameInstance()->GetSubsystem<UCl1BridgeSubsystem>();
@@ -79,14 +127,18 @@ FreqHz))`, then the bridge builds the cathodic-first
 To run functions, you will need the `CL1BridgeSubsystem` node.
 In `UE-CL1-API` folder, you will find `\Blueprints\BP_CL1BridgeManager.uasset` which contains the following examples:
 
-`StartReceiver`
+`StartReceiver` – starts the UDP spike listener so Unreal can receive CL1 spikes.
 ![StartReceiver](docs/StartReceiver.png)
 
-`GetChannelRates`
+`GetChannelRates` – calculates recent firing rates for individual channels, useful for gameplay or analytics.
 ![GetChannelRates](docs/GetChannelRates.png)
 
-`ConfigureControlTarget` and `SendStimulation`
+`ConfigureControlTarget` and `SendStimulation` – configure the bridge target address and send a biphasic stimulation command back to the CL1.
 ![SendStim](docs/SendStimulation.png)
+
+`SendStimPlan` – create and send a grouped stimulation plan that delivers multiple channel/burst patterns atomically.
+![SendStim](docs/SendStimuPlan.png)
+
 
 
 ## Running
@@ -101,13 +153,13 @@ python3 bridge.py --ue-host 192.168.1.50 --ue-port 12345 \
                   --max-amp 10 --max-channel 63 --rate 1000
 
 # 3. Simulate CL1
-# Random simulation with deterministic seed
+  # Random simulation with deterministic seed
 python3 bridge.py --simulator --random-seed 42
 
-# Replay a recording with accelerated time
+  # Replay a recording with accelerated time
 python3 bridge.py --replay-path /path/to/recording.h5 --accelerated-time
 
-# Custom random simulation parameters
+  # Custom random simulation parameters
 python3 bridge.py --simulator --sample-mean 200 --spike-percentile 99.9
 ```
 
@@ -117,12 +169,11 @@ alters them. Defaults are conservative; set them to your IRB/lab protocol. Note
 the channel ceiling: `PROTOCOL.md` uses 0–59, but the CL1 reference is 64
 channels (0–63) — use `--max-channel` to match your MEA.
 
-## Backend-agnostic (Assembloid §3.1)
+## Backend-agnostic
 
-UE only sees UDP, so the same plugin drives a CL1 (via `bridge.py`) or a NEST /
-SNN / EEG stand-in that speaks the same firehose + AA convention — identical
-state/reward mappings across substrates, per the paper's parallel-configuration
-design.
+UE only sees UDP, so the same plugin drives a CL1 (via `bridge.py`) or an equivalent NEST /
+SNN / EEG stand-in that uses the same firehose + AA convention, identical
+state/reward mappings across substrates. This will hopefully be easy to integrate with other biocomputing platforms.
 
 ## Files
 

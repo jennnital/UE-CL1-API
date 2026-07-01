@@ -71,6 +71,7 @@ assert AA_HEADER.size == 16
 MSG_STIM = 1
 MSG_INTERRUPT = 2
 MSG_RECORD = 4
+MSG_STIMPLAN = 5
 
 FLAG_BIPHASIC = 0x01           # charge-balanced biphasic (phase1 -, phase2 +)
 FLAG_INTERRUPT_THEN_STIM = 0x02  # v2: replace ongoing activity before stimulating
@@ -83,7 +84,7 @@ FLAG_INTERRUPT_THEN_STIM = 0x02  # v2: replace ongoing activity before stimulati
 class SafetyEnvelope:
     def __init__(self, max_amp_uA=10.0, min_pw_us=10, max_pw_us=1000,
                  max_pulses=100, min_freq=1.0, max_freq=200.0,
-                 min_channel=0, max_channel=59):
+                 min_channel=0, max_channel=63):
         self.max_amp_uA = max_amp_uA
         self.min_pw_us = min_pw_us
         self.max_pw_us = max_pw_us
@@ -95,10 +96,15 @@ class SafetyEnvelope:
 
     def check(self, amp_uA, pw_us, num_pulses, freq_hz, channels):
         """Return (ok, reason). Bursts (num_pulses>1) are checked against freq."""
-        if abs(amp_uA) > self.max_amp_uA:
-            return False, f"|amplitude|={abs(amp_uA):.2f}uA > {self.max_amp_uA}uA"
-        if not (self.min_pw_us <= pw_us <= self.max_pw_us):
-            return False, f"pulse_width={pw_us}us outside [{self.min_pw_us},{self.max_pw_us}]"
+        amp_list = amp_uA if isinstance(amp_uA, (list, tuple)) else [amp_uA]
+        pw_list = pw_us if isinstance(pw_us, (list, tuple)) else [pw_us]
+
+        for amp in amp_list:
+            if abs(amp) > self.max_amp_uA:
+                return False, f"|amplitude|={abs(amp):.2f}uA > {self.max_amp_uA}uA"
+        for pw in pw_list:
+            if not (self.min_pw_us <= pw <= self.max_pw_us):
+                return False, f"pulse_width={pw}us outside [{self.min_pw_us},{self.max_pw_us}]"
         if num_pulses > self.max_pulses:
             return False, f"num_pulses={num_pulses} > {self.max_pulses}"
         if num_pulses > 1 and not (self.min_freq <= freq_hz <= self.max_freq):
@@ -183,6 +189,61 @@ class ControlReceiver(threading.Thread):
             AA_HEADER.unpack_from(data, 0)
         if magic != AA_MAGIC:
             return None
+
+        if mtype == MSG_STIMPLAN:
+            num_groups = nch
+            offset = AA_HEADER.size
+            if len(data) < offset + 1:
+                return None
+            interrupt_nch = data[offset]
+            offset += 1
+            interrupt_channels = list(data[offset:offset + interrupt_nch])
+            if len(interrupt_channels) != interrupt_nch:
+                return None
+            offset += interrupt_nch
+
+            groups = []
+            for _ in range(num_groups):
+                if len(data) < offset + 4:
+                    return None
+                group_nch = data[offset]
+                num_phases = data[offset + 1]
+                lead_time_us = struct.unpack_from("<H", data, offset + 2)[0]
+                offset += 4
+
+                phases = []
+                for _ in range(num_phases):
+                    if len(data) < offset + 6:
+                        return None
+                    phase_pw = struct.unpack_from("<H", data, offset)[0]
+                    phase_amp = struct.unpack_from("<f", data, offset + 2)[0]
+                    phases.append((phase_pw, phase_amp))
+                    offset += 6
+
+                if len(data) < offset + 4:
+                    return None
+                group_npulses = struct.unpack_from("<H", data, offset)[0]
+                group_freq = struct.unpack_from("<H", data, offset + 2)[0]
+                offset += 4
+
+                channels = list(data[offset:offset + group_nch])
+                if len(channels) != group_nch:
+                    return None
+                offset += group_nch
+
+                groups.append(dict(channels=channels,
+                                   phases=phases,
+                                   num_pulses=group_npulses,
+                                   freq_hz=float(group_freq),
+                                   lead_time_us=lead_time_us))
+
+            if offset != len(data):
+                return None
+
+            return dict(version=ver, msg_type=mtype, flags=flags,
+                        interrupt_channels=interrupt_channels,
+                        groups=groups)
+
         channels = list(data[AA_HEADER.size:AA_HEADER.size + nch])
         if len(channels) != nch:
             return None
@@ -236,16 +297,83 @@ def apply_command(cl, neurons, cmd, envelope, recording_state):
                 print("[bridge] recording stopped", file=sys.stderr)
         return
 
-    channels = cmd["channels"]
-    if not channels:
-        return
-
     if mtype == MSG_INTERRUPT:
+        channels = cmd.get("channels", [])
+        if not channels:
+            return
         # Sec 6.1.1: clean stop of ongoing activity on these channels.
         try:
             neurons.interrupt(cl.ChannelSet(*channels))
         except Exception as e:
             print(f"[bridge] interrupt failed: {e}", file=sys.stderr)
+        return
+
+    if mtype == MSG_STIMPLAN:
+        interrupt_channels = cmd.get("interrupt_channels", [])
+        if interrupt_channels:
+            try:
+                neurons.interrupt(cl.ChannelSet(*interrupt_channels))
+            except Exception as e:
+                print(f"[bridge] interrupt failed: {e}", file=sys.stderr)
+                return
+
+        plan_groups = cmd.get("groups", [])
+        if not plan_groups:
+            return
+
+        interrupt_first = bool(cmd["flags"] & FLAG_INTERRUPT_THEN_STIM)
+        try:
+            for group in plan_groups:
+                channels = group["channels"]
+                if not channels:
+                    continue
+
+                phases = group["phases"]
+                lead_time = group.get("lead_time_us", 80)
+                npulses = group["num_pulses"]
+                freq = group["freq_hz"]
+
+                amp_list = [amp for _, amp in phases]
+                pw_list = [pw for pw, _ in phases]
+                ok, reason = envelope.check(amp_list, pw_list, npulses, freq, channels)
+                if not ok:
+                    print(f"[bridge] REJECT stim plan ({reason})", file=sys.stderr)
+                    return
+
+                flat_phase_args = []
+                for pw, amp in phases:
+                    flat_phase_args.extend((pw, amp))
+
+                design = cl.StimDesign(*flat_phase_args)
+                cset = cl.ChannelSet(*channels)
+                burst = cl.BurstDesign(npulses, freq) if npulses > 1 and freq > 0 else None
+
+                if burst is not None:
+                    if interrupt_first:
+                        try:
+                            neurons.interrupt_then_stim(cset, design, burst, lead_time)
+                        except TypeError:
+                            neurons.interrupt_then_stim(cset, design, burst)
+                    else:
+                        try:
+                            neurons.stim(cset, design, burst, lead_time)
+                        except TypeError:
+                            neurons.stim(cset, design, burst)
+                else:
+                    if interrupt_first:
+                        try:
+                            neurons.interrupt_then_stim(cset, design, lead_time)
+                        except TypeError:
+                            neurons.interrupt_then_stim(cset, design)
+                    else:
+                        try:
+                            neurons.stim(cset, design, lead_time)
+                        except TypeError:
+                            neurons.stim(cset, design)
+        except cl.TransactionRejected:
+            print("[bridge] stim TransactionRejected (admission/capacity)", file=sys.stderr)
+        except Exception as e:
+            print(f"[bridge] stim failed: {e}", file=sys.stderr)
         return
 
     if mtype != MSG_STIM:

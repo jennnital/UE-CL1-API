@@ -12,12 +12,34 @@
 #include "Misc/FileHelper.h"
 #include "Math/UnrealMathUtility.h"
 
+static void PushU8(TArray<uint8>& Packet, uint8 V)
+{
+    Packet.Add(V);
+}
+
+static void PushU16(TArray<uint8>& Packet, uint16 V)
+{
+    Packet.Add(uint8(V & 0xFF));
+    Packet.Add(uint8((V >> 8) & 0xFF));
+}
+
+static void PushF32(TArray<uint8>& Packet, float V)
+{
+    uint32 B;
+    FMemory::Memcpy(&B, &V, 4);
+    Packet.Add(uint8(B & 0xFF));
+    Packet.Add(uint8((B >> 8) & 0xFF));
+    Packet.Add(uint8((B >> 16) & 0xFF));
+    Packet.Add(uint8((B >> 24) & 0xFF));
+}
+
 // 'AA' control packet message types / flags (must match bridge.py + PROTOCOL.md)
 namespace AA
 {
 	constexpr uint8 MsgStim      = 1;
 	constexpr uint8 MsgInterrupt = 2;
 	constexpr uint8 MsgRecord    = 4;
+	constexpr uint8 MsgStimPlan  = 5;
 
 	constexpr uint8 FlagBiphasic         = 0x01; // charge-balanced (RECORD: start/stop)
 	constexpr uint8 FlagInterruptThenStim = 0x02;
@@ -151,7 +173,11 @@ void UCl1BridgeSubsystem::HandleReceivedData(const FArrayReaderPtr& Data,
 		if (!Self) { return; }
 		for (const FCl1Spike& S : Spikes) { Self->TrackSpike(S); }
 		Self->OnSpikeBatch.Broadcast(Spikes);
-		for (const FCl1Spike& S : Spikes) { Self->OnSpike.Broadcast(S); }
+		for (const FCl1Spike& S : Spikes)
+		{
+			Self->OnSpike.Broadcast(S);
+			Self->OnSpikeInChannel.Broadcast(S.Channel, S);
+		}
 	});
 }
 
@@ -186,28 +212,106 @@ bool UCl1BridgeSubsystem::SendControlPacket(uint8 MsgType, uint8 Flags,
 	TArray<uint8> Packet;
 	Packet.Reserve(16 + Channels.Num());
 
-	auto PushU8  = [&](uint8 V){ Packet.Add(V); };
-	auto PushU16 = [&](uint16 V){ Packet.Add(uint8(V & 0xFF)); Packet.Add(uint8((V >> 8) & 0xFF)); };
-	auto PushF32 = [&](float V){ uint32 B; FMemory::Memcpy(&B, &V, 4);
-		Packet.Add(uint8(B & 0xFF)); Packet.Add(uint8((B >> 8) & 0xFF));
-		Packet.Add(uint8((B >> 16) & 0xFF)); Packet.Add(uint8((B >> 24) & 0xFF)); };
-
-	PushU8('A'); PushU8('A');           // magic
-	PushU8(AA::Version);                // version
-	PushU8(MsgType);                    // msg_type
-	PushU8(Flags);                      // flags
-	PushU8(uint8(Channels.Num()));      // num_channels
-	PushU16(PulseWidthUs);              // pulse_width_us
-	PushF32(AmplitudeUa);               // amplitude_uA
-	PushU16(NumPulses);                 // num_pulses
-	PushU16(FreqHz);                    // freq_hz
-	for (int32 C : Channels) { PushU8(uint8(FMath::Clamp(C, 0, 255))); }
+	PushU8(Packet, 'A'); PushU8(Packet, 'A');           // magic
+	PushU8(Packet, AA::Version);                         // version
+	PushU8(Packet, MsgType);                             // msg_type
+	PushU8(Packet, Flags);                               // flags
+	PushU8(Packet, uint8(Channels.Num()));               // num_channels
+	PushU16(Packet, PulseWidthUs);                       // pulse_width_us
+	PushF32(Packet, AmplitudeUa);                        // amplitude_uA
+	PushU16(Packet, NumPulses);                          // num_pulses
+	PushU16(Packet, FreqHz);                             // freq_hz
+	for (int32 C : Channels) { PushU8(Packet, uint8(FMath::Clamp(C, 0, 255))); }
 
 	int32 Sent = 0;
 	const bool bOk = ControlSocket->SendTo(Packet.GetData(), Packet.Num(), Sent, *ControlAddr);
 	if (!bOk || Sent != Packet.Num())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[CL1] Control send failed (%d/%d) - verify bridge.py listening and ConfigureControlTarget() called"), Sent, Packet.Num());
+		return false;
+	}
+	return true;
+}
+
+bool UCl1BridgeSubsystem::SendStimPlan(const TArray<FCl1StimPlanGroup>& Groups, bool bInterruptFirst,
+	FString& OutDescription)
+{
+	if (Groups.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CL1] SendStimPlan: no groups specified"));
+		return false;
+	}
+
+	int32 TotalBytes = 16; // header
+	TotalBytes += 1; // interrupt channel count
+	if (ControlAddr.IsValid())
+	{
+		// attached interrupt channels are not yet supported in the packet-level API
+		TotalBytes += 0;
+	}
+
+	for (const FCl1StimPlanGroup& Group : Groups)
+	{
+		if (Group.Channels.Num() > 255)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[CL1] SendStimPlan: group has too many channels (%d)"), Group.Channels.Num());
+			return false;
+		}
+		if (Group.PhaseWidthsUs.Num() != Group.PhaseAmplitudesUa.Num())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[CL1] SendStimPlan: phase widths and amplitudes count mismatch"));
+			return false;
+		}
+		if (Group.PhaseWidthsUs.Num() == 0 || Group.PhaseWidthsUs.Num() > 255)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[CL1] SendStimPlan: invalid phase count %d"), Group.PhaseWidthsUs.Num());
+			return false;
+		}
+		TotalBytes += 4 + Group.PhaseWidthsUs.Num() * 6 + 4 + Group.Channels.Num();
+	}
+
+	TArray<uint8> Packet;
+	Packet.Reserve(TotalBytes);
+
+	PushU8(Packet, 'A'); PushU8(Packet, 'A');
+	PushU8(Packet, AA::Version);
+	PushU8(Packet, AA::MsgStimPlan);
+	PushU8(Packet, bInterruptFirst ? AA::FlagInterruptThenStim : 0);
+	PushU8(Packet, uint8(Groups.Num()));
+	PushU16(Packet, 0); // placeholder for STIM header fields
+	PushF32(Packet, 0.f);
+	PushU16(Packet, 0);
+	PushU16(Packet, 0);
+
+	PushU8(Packet, 0); // no interrupt channels currently supported
+
+	for (const FCl1StimPlanGroup& Group : Groups)
+	{
+		PushU8(Packet, uint8(Group.Channels.Num()));
+		PushU8(Packet, uint8(Group.PhaseWidthsUs.Num()));
+		PushU16(Packet, uint16(FMath::Clamp(Group.LeadTimeUs, 0, 65535)));
+
+		for (int32 idx = 0; idx < Group.PhaseWidthsUs.Num(); ++idx)
+		{
+			PushU16(Packet, uint16(FMath::Clamp(Group.PhaseWidthsUs[idx], 0, 65535)));
+			PushF32(Packet, Group.PhaseAmplitudesUa[idx]);
+		}
+
+		PushU16(Packet, uint16(FMath::Clamp(Group.NumPulses, 0, 65535)));
+		PushU16(Packet, uint16(FMath::Clamp(FMath::RoundToInt(Group.FreqHz), 0, 65535)));
+		for (int32 C : Group.Channels)
+		{
+			PushU8(Packet, uint8(FMath::Clamp(C, 0, 255)));
+		}
+	}
+
+	OutDescription = FString::Printf(TEXT("StimPlan with %d groups"), Groups.Num());
+
+	int32 Sent = 0;
+	const bool bOk = ControlSocket->SendTo(Packet.GetData(), Packet.Num(), Sent, *ControlAddr);
+	if (!bOk || Sent != Packet.Num())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CL1] StimPlan send failed (%d/%d) - verify bridge.py listening and ConfigureControlTarget() called"), Sent, Packet.Num());
 		return false;
 	}
 	return true;
@@ -265,8 +369,10 @@ bool UCl1BridgeSubsystem::SendRewardSignal(bool bPositive, const TArray<int32>& 
 	//   positive => predictable burst; negative => silence (interrupt).
 	if (bPositive)
 	{
+		FString OutChannels, OutFreqHz, OutPulseWidth, OutAmplitude, OutDuration;
 		return SendStimulation(RewardChannels, FreqHz, PulseWidthUs, AmplitudeUa,
-			DurationMs, /*bInterruptFirst*/ true);
+			DurationMs, /*bInterruptFirst*/ true, OutChannels, OutFreqHz,
+			OutPulseWidth, OutAmplitude, OutDuration);
 	}
 	return InterruptStim(RewardChannels);
 }

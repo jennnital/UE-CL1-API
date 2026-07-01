@@ -56,5 +56,8 @@ struct FCl1ChannelRate
 /** Fired once per spike, on the game thread. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCl1OnSpike, FCl1Spike, Spike);
 
+/** Fired for each spike with an explicit channel parameter. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FCl1OnSpikeInChannel, int32, Channel, FCl1Spike, Spike);
+
 /** Fired once per received packet with every spike in it, on the game thread. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FCl1OnSpikeBatch, const TArray<FCl1Spike>&, Spikes);

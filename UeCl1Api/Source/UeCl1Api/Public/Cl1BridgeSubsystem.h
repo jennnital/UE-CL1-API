@@ -12,6 +12,36 @@
 class FSocket;
 class FUdpSocketReceiver;
 
+USTRUCT(BlueprintType)
+struct FCl1StimPlanGroup
+{
+    GENERATED_BODY()
+
+    /** Electrode indices to stimulate as one atomic group. */
+    UPROPERTY(BlueprintReadWrite, Category = "CL1")
+    TArray<int32> Channels;
+
+    /** Per-phase widths in microseconds. The amplitudes array must be the same length. */
+    UPROPERTY(BlueprintReadWrite, Category = "CL1")
+    TArray<int32> PhaseWidthsUs;
+
+    /** Per-phase amplitudes in microamps. The widths array must be the same length. */
+    UPROPERTY(BlueprintReadWrite, Category = "CL1")
+    TArray<float> PhaseAmplitudesUa;
+
+    /** Burst pulse count. Use 1 for single-pulse stimulation. */
+    UPROPERTY(BlueprintReadWrite, Category = "CL1")
+    int32 NumPulses = 1;
+
+    /** Burst frequency in Hz, used when NumPulses > 1. */
+    UPROPERTY(BlueprintReadWrite, Category = "CL1")
+    float FreqHz = 0.f;
+
+    /** Lead time before the stimulation begins, in microseconds. */
+    UPROPERTY(BlueprintReadWrite, Category = "CL1")
+    int32 LeadTimeUs = 80;
+};
+
 /**
  * UCl1BridgeSubsystem
  *
@@ -71,10 +101,20 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "CL1|Stim")
 	bool SendStimulation(const TArray<int32>& Channels, float FreqHz, int32 PulseWidthUs,
-	                     float AmplitudeUa, float DurationMs, bool bInterruptFirst = false,
-	                     FString& OutChannels = FString(), FString& OutFreqHz = FString(),
-	                     FString& OutPulseWidth = FString(), FString& OutAmplitude = FString(),
-	                     FString& OutDuration = FString());
+	                     float AmplitudeUa, float DurationMs, bool bInterruptFirst,
+	                     FString& OutChannels, FString& OutFreqHz,
+	                     FString& OutPulseWidth, FString& OutAmplitude,
+	                     FString& OutDuration);
+
+	/**
+	 * Send an atomic multi-group stimulation plan. Each group is admitted in the
+	 * same frame and is visible together, matching CL1 StimPlan semantics.
+	 * TransactionRejected is surfaced by the bridge if the CL1 cannot admit the
+	 * whole plan atomically.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "CL1|Stim")
+	bool SendStimPlan(const TArray<FCl1StimPlanGroup>& Groups, bool bInterruptFirst,
+	                  FString& OutDescription);
 
 	/**
 	 * Reinforcement signal (Assembloid SendRewardSignal). In the DishBrain
@@ -129,6 +169,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "CL1")
 	FCl1OnSpike OnSpike;
+
+	UPROPERTY(BlueprintAssignable, Category = "CL1")
+	FCl1OnSpikeInChannel OnSpikeInChannel;
 
 	UPROPERTY(BlueprintAssignable, Category = "CL1")
 	FCl1OnSpikeBatch OnSpikeBatch;
