@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Cl1SpikeTypes.h"
+#include "Common/UdpSocketReceiver.h"
+#include "Interfaces/IPv4/IPv4Endpoint.h"
 #include "Cl1BridgeSubsystem.generated.h"
 
 class FSocket;
