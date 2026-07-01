@@ -37,9 +37,22 @@ STIM / CONTROL PACKET  UE -> CL1   (PROTOCOL.md header '<2sBBBBHfHH' = 16 bytes)
     12  2  u16   num_pulses       >=1; >1 => burst
     14  2  u16   freq_hz          burst rate (used if num_pulses > 1)
     16  1xN u8   channels         electrodes
+
+
+When running bridge.py you can use these simulate modes without CL1 device:
+
+# Random simulation with deterministic seed
+python3 bridge.py --simulator --random-seed 42
+
+# Replay a recording with accelerated time
+python3 bridge.py --replay-path /path/to/recording.h5 --accelerated-time
+
+# Custom random simulation parameters
+python3 bridge.py --simulator --sample-mean 200 --spike-percentile 99.9
 """
 
 import argparse
+import os
 import queue
 import socket
 import struct
@@ -276,6 +289,25 @@ def apply_command(cl, neurons, cmd, envelope, recording_state):
 # Main run loop (real hardware / simulator path)
 # --------------------------------------------------------------------------- #
 def run_bridge(args):
+    # Configure simulator via environment variables if requested
+    if args.simulator or args.replay_path:
+        if args.replay_path:
+            os.environ["CL_SDK_REPLAY_PATH"] = args.replay_path
+        if args.replay_start_offset is not None:
+            os.environ["CL_SDK_REPLAY_START_OFFSET"] = str(args.replay_start_offset)
+        if args.sample_mean is not None:
+            os.environ["CL_SDK_SAMPLE_MEAN"] = str(args.sample_mean)
+        if args.spike_percentile is not None:
+            os.environ["CL_SDK_SPIKE_PERCENTILE"] = str(args.spike_percentile)
+        if args.random_seed is not None:
+            os.environ["CL_SDK_RANDOM_SEED"] = str(args.random_seed)
+        if args.spike_visibility is not None:
+            os.environ["CL_SDK_SPIKE_VISIBILITY"] = str(args.spike_visibility)
+        if args.accelerated_time:
+            os.environ["CL_SDK_ACCELERATED_TIME"] = "1"
+        if args.disable_visualisation:
+            os.environ["CL_SDK_VISUALISATION"] = "0"
+
     import cl  # lazy import so --selftest works without the SDK
 
     envelope = SafetyEnvelope(
@@ -385,6 +417,25 @@ def build_parser():
     p.add_argument("--max-freq", type=float, default=200.0)
     p.add_argument("--max-channel", type=int, default=59,
                    help="highest allowed electrode (PROTOCOL.md=59; CL1 ref is 64ch => 63)")
+    # Simulator options (CL SDK)
+    p.add_argument("--simulator", action="store_true",
+                   help="Enable CL SDK simulator (local development mode)")
+    p.add_argument("--replay-path", type=str, default=None,
+                   help="Path to recording file to replay in simulator")
+    p.add_argument("--replay-start-offset", type=int, default=None,
+                   help="Starting frame offset in replay recording (default: random)")
+    p.add_argument("--sample-mean", type=int, default=None,
+                   help="Mean samples value for random simulation (default: 170)")
+    p.add_argument("--spike-percentile", type=float, default=None,
+                   help="Percentile threshold for spike detection (default: 99.995)")
+    p.add_argument("--random-seed", type=int, default=None,
+                   help="Random seed for deterministic simulation")
+    p.add_argument("--spike-visibility", type=int, default=None,
+                   help="Amplify spike visibility in sample data (default: 0)")
+    p.add_argument("--accelerated-time", action="store_true",
+                   help="Enable accelerated (non-wall-clock) time in simulator")
+    p.add_argument("--disable-visualisation", action="store_true",
+                   help="Disable WebSocket visualization server in simulator")
     # Self-test
     p.add_argument("--selftest", action="store_true")
     p.add_argument("--selftest-rate", type=float, default=5.0)

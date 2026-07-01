@@ -207,7 +207,7 @@ bool UCl1BridgeSubsystem::SendControlPacket(uint8 MsgType, uint8 Flags,
 	const bool bOk = ControlSocket->SendTo(Packet.GetData(), Packet.Num(), Sent, *ControlAddr);
 	if (!bOk || Sent != Packet.Num())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[CL1] Control send failed (%d/%d)"), Sent, Packet.Num());
+		UE_LOG(LogTemp, Warning, TEXT("[CL1] Control send failed (%d/%d) - verify bridge.py listening and ConfigureControlTarget() called"), Sent, Packet.Num());
 		return false;
 	}
 	return true;
@@ -216,10 +216,30 @@ bool UCl1BridgeSubsystem::SendControlPacket(uint8 MsgType, uint8 Flags,
 // --------------------------------------------------------------------------- //
 // Stimulation API (Assembloid Sec 3.3)
 // --------------------------------------------------------------------------- //
-bool UCl1BridgeSubsystem::SendStimulus(const TArray<int32>& Channels, float FreqHz,
-	int32 PulseWidthUs, float AmplitudeUa, float DurationMs, bool bInterruptFirst)
+bool UCl1BridgeSubsystem::SendStimulation(const TArray<int32>& Channels, float FreqHz,
+	int32 PulseWidthUs, float AmplitudeUa, float DurationMs, bool bInterruptFirst,
+	FString& OutChannels, FString& OutFreqHz, FString& OutPulseWidth,
+	FString& OutAmplitude, FString& OutDuration)
 {
-	if (Channels.Num() == 0) { return false; }
+	if (Channels.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[CL1] SendStimulation: no channels specified"));
+		return false;
+	}
+
+	// Build output strings for Blueprint debugging/logging
+	FString ChannelStr = TEXT("[");
+	for (int32 i = 0; i < Channels.Num(); ++i)
+	{
+		if (i > 0) ChannelStr += TEXT(", ");
+		ChannelStr += FString::Printf(TEXT("%d"), Channels[i]);
+	}
+	ChannelStr += TEXT("]");
+	OutChannels = ChannelStr;
+	OutFreqHz = FString::Printf(TEXT("%.1f Hz"), FreqHz);
+	OutPulseWidth = FString::Printf(TEXT("%d us"), PulseWidthUs);
+	OutAmplitude = FString::Printf(TEXT("%.2f uA"), AmplitudeUa);
+	OutDuration = FString::Printf(TEXT("%.1f ms"), DurationMs);
 
 	// Duration -> pulse count (PROTOCOL.md): NumPulses = max(1, round(s * Hz)).
 	int32 NumPulses = 1;
@@ -245,7 +265,7 @@ bool UCl1BridgeSubsystem::SendRewardSignal(bool bPositive, const TArray<int32>& 
 	//   positive => predictable burst; negative => silence (interrupt).
 	if (bPositive)
 	{
-		return SendStimulus(RewardChannels, FreqHz, PulseWidthUs, AmplitudeUa,
+		return SendStimulation(RewardChannels, FreqHz, PulseWidthUs, AmplitudeUa,
 			DurationMs, /*bInterruptFirst*/ true);
 	}
 	return InterruptStim(RewardChannels);

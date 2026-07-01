@@ -58,22 +58,28 @@ public:
 	// --- Stimulation (Assembloid Sec 3.3 / CL paper Sec 6) -----------------
 
 	/**
-	 * Deliver targeted stimulation. Mirrors Assembloid SendStimulus():
+	 * Deliver targeted stimulation. Mirrors Assembloid SendStimulation():
 	 * channels, firing frequency (Hz), pulse width (us), amplitude (uA),
 	 * duration (ms). Duration is converted to a pulse count:
 	 *   NumPulses = max(1, round(DurationMs/1000 * FreqHz)).
 	 * Set bInterruptFirst to cleanly REPLACE ongoing activity (CL Sec 6.1.1)
 	 * instead of appending to the per-channel queue - use this for continuous
 	 * proximity->frequency control so latency does not build up.
+	 * REQUIRES: ConfigureControlTarget() called first with bridge.py's control port.
+	 * OutChannels, OutFreqHz, OutPulseWidth, OutAmplitude, OutDuration are populated
+	 * with string representations of the sent parameters for debugging/logging.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "CL1|Stim")
-	bool SendStimulus(const TArray<int32>& Channels, float FreqHz, int32 PulseWidthUs,
-	                  float AmplitudeUa, float DurationMs, bool bInterruptFirst = false);
+	bool SendStimulation(const TArray<int32>& Channels, float FreqHz, int32 PulseWidthUs,
+	                     float AmplitudeUa, float DurationMs, bool bInterruptFirst = false,
+	                     FString& OutChannels = FString(), FString& OutFreqHz = FString(),
+	                     FString& OutPulseWidth = FString(), FString& OutAmplitude = FString(),
+	                     FString& OutDuration = FString());
 
 	/**
 	 * Reinforcement signal (Assembloid SendRewardSignal). In the DishBrain
 	 * paradigm reward IS stimulation, so this is a thin, experiment-defined
-	 * wrapper over SendStimulus. By convention here: positive => a predictable
+	 * wrapper over SendStimulation. By convention here: positive => a predictable
 	 * burst on RewardChannels; negative => an interrupt (silence). Override the
 	 * mapping to match your protocol.
 	 */

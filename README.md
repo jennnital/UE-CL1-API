@@ -9,7 +9,7 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 
 ## Closed-loop API design:
 
-![Proposed API](uecl1apidiagram.png)
+![Proposed API](docs/uecl1apidiagram.png)
 
 ```
    CL1 ──(spike firehose, port 12345)──▶  Unreal Engine
@@ -51,7 +51,7 @@ Control packet (UE→substrate) is the Assembloid `'AA'` header `'<2sBBBBHfHH'`
 See `PLUGINNOTES.md` for the §6 mapping and the v2/v3 rationale.
 
 ## Assembloid API (C++ & Blueprint)
-
+### C++
 ```cpp
 UCl1BridgeSubsystem* CL1 = GetGameInstance()->GetSubsystem<UCl1BridgeSubsystem>();
 CL1->StartReceiver(12345);                              // spike firehose in
@@ -78,6 +78,20 @@ CL1->ExportToCSV(FPaths::ProjectSavedDir() / TEXT("spikes.csv"));
 FreqHz))`, then the bridge builds the cathodic-first
 `StimDesign(pw,-amp,pw,+amp)` (+ `BurstDesign` for bursts) per §6.1.
 
+### Blueprint examples
+To run functions, you will need the `CL1BridgeSubsystem` node.
+In `UE-CL1-API` folder, you will find `\Blueprints\BP_CL1BridgeManager.uasset` which contains the following examples:
+
+`StartReceiver`
+![StartReceiver](docs/StartReceiver.png)
+
+`GetChannelRates`
+![GetChannelRates](docs/GetChannelRates.png)
+
+`ConfigureControlTarget` and `SendStimulation`
+![SendStim](docs/SendStimulation.png)
+
+
 ## Running
 
 ```bash
@@ -88,6 +102,16 @@ python3 bridge.py --selftest --ue-host 127.0.0.1 --ue-port 12345
 python3 bridge.py --ue-host 192.168.1.50 --ue-port 12345 \
                   --control-listen-port 12346 \
                   --max-amp 10 --max-channel 63 --rate 1000
+
+# 3. Simulate CL1
+# Random simulation with deterministic seed
+python3 bridge.py --simulator --random-seed 42
+
+# Replay a recording with accelerated time
+python3 bridge.py --replay-path /path/to/recording.h5 --accelerated-time
+
+# Custom random simulation parameters
+python3 bridge.py --simulator --sample-mean 200 --spike-percentile 99.9
 ```
 
 The safety envelope (Assembloid §5) rejects-and-drops out-of-range commands
