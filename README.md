@@ -12,8 +12,8 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 ![Proposed API](docs/uecl1apidiagram.png)
 
 ```
-   CL1 ──(spike firehose, port 12345)──▶  Unreal Engine
-   CL1 ◀──(stimulation/ AA control, port 12346)──   Unreal Engine
+   CL1 ──(neuronal spiking activity, port 12345)──▶  Unreal Engine
+   CL1 ◀──(electrical stimulation, port 12346)──   Unreal Engine
 ```
 
 | File | Runs on | Role |
