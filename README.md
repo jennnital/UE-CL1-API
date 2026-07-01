@@ -23,8 +23,6 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 | `Plugins/UeCl1Api` | your Unreal project | (1) receives and parses spikes and channels via UDP
 |||(2) exposes the Assembloid Agency API to C++/Blueprint
 |||(3) `sendstimulus` packs stimulus and sends to bridge.py |
-| `PROTOCOL.md` | — | wire spec of `.uplugin` |
-| `PLUGINNOTES.md` | — | how PROTOCOL.md maps to §6 + what changed |
 
 ## Data types 
 
@@ -48,7 +46,6 @@ Control packet (UE→substrate) is the Assembloid `'AA'` header `'<2sBBBBHfHH'`
 - `2 INTERRUPT` — clean stop on the listed channels.
 - `4 RECORD` — start/stop CL1-side HDF5 recording (`flags` bit0 = start).
 
-See `PLUGINNOTES.md` for the §6 mapping and the v2/v3 rationale.
 
 ## Assembloid API (C++ & Blueprint)
 ### C++
@@ -130,17 +127,26 @@ design.
 ## Files
 
 ```
-ue-cl1-api/
+UE-CL1-API/
 ├── bridge.py
-├── PROTOCOL.md
-├── CROSSCHECK.md
 ├── README.md
-└── Plugins/UeCl1Api/
+└── UeCl1Api/
     ├── UeCl1Api.uplugin
-    └── Source/UeCl1Api/
-        ├── UeCl1Api.Build.cs
-        ├── Private/UeCl1Api.cpp
-        ├── Private/Cl1BridgeSubsystem.cpp
-        ├── Public/Cl1BridgeSubsystem.h
-        └── Public/Cl1SpikeTypes.h
+    ├── Config/
+    │   └── FilterPlugin.ini
+    ├── Content/
+    │   └── Blueprints/
+    │       ├── BP_CL1BridgeManager.uasset
+    │       └── Assets/
+    └── Source/
+        └── UeCl1Api/
+            ├── UeCl1Api.Build.cs
+            ├── Private/
+            │   ├── Cl1BridgeLibrary.cpp
+            │   ├── Cl1BridgeSubsystem.cpp
+            │   └── UeCl1Api.cpp
+            └── Public/
+                ├── Cl1BridgeLibrary.h
+                ├── Cl1BridgeSubsystem.h
+                └── Cl1SpikeTypes.h
 ```
