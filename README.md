@@ -1,7 +1,7 @@
 
 # UE-CL1-API: Unreal Engine API for Brains-on-Chips (CL-1)
 
-A closed-loop UDP interface between Cortical Labs' CL1 biocomputer and Unreal Engine — receive living-neuron spikes as gameplay events, send 'assembloid agency(AA)' electrical stimulation back as feedback.
+A closed-loop UDP interface between Cortical Labs' CL1 biocomputer and Unreal Engine — receive living-neuron spikes as gameplay events, send electrical stimulation back as feedback.
 
 This repo contains a UE plugin that builds a UDP bridge between **Unreal Engine** and a **CL1**, implementing the closed loop from [*Assembloid Agency*](https://openreview.net/forum?id=BroaBkQAGa)
 (Leung & Loewith, NeurIPS 2025 Creative AI Track) on top of the official CL1
