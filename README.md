@@ -107,16 +107,11 @@ In `UE-CL1-API` folder, you will find `\Blueprints\BP_CL1BridgeManager.uasset` w
 ![SendStimPlan](docs/SendStimPlan.png)
 
 
+## Game State Encoder and Decoder Blueprint 
 
-## Game-state codec (control a pawn)
-
-The codec is implemented by `UCl1GameStates` in
-`UeCl1Api/Source/UeCl1Api/Public/Cl1GameStates.h` and
-`UeCl1Api/Source/UeCl1Api/Private/Cl1GameStates.cpp`. It ports the
-biocompute closed loop (`cl1-callosum-biocompute`:
-`models.encoders.SymbolToFixedChannelEncoder` +
-`models.decoders.LinearArgmaxDecoder`, wired live in `classify_server.py`) onto
-this bridge and translates **four game states ⇄ CL1 activity** in both
+The `BP_Cl1GameStates` blueprint creates a biocompute closed loop
+`SymbolToFixedChannelEncoder` + `LinearArgmaxDecoder`, wired live in
+`/organoid/classify_server.py`) onto this bridge and translates **four game states ⇄ CL1 activity** in both
 directions:
 
 - `CL1GameStates` = `UeCl1Api/Source/UeCl1Api/Public/Cl1GameStates.h` — the
@@ -163,6 +158,10 @@ if (Codec->DecodeState(R) && R.Confidence > 0.5f)
 ```
 
 ### Blueprint
+
+`BP_Cl1GameStates`
+![GameStates](docs/BPGameStatesExample.png)
+
 1. `StartReceiver` + `ConfigureControlTarget` on the `CL1BridgeSubsystem` (as above).
 2. Add the `CL1 Game States` component to your pawn, or use `BP_CL1GameStates`
    as a Blueprint wrapper that owns the component.
@@ -273,11 +272,11 @@ state/reward mappings across substrates. This will hopefully be easy to integrat
 UE-CL1-API/
 ├── bridge.py
 ├── README.md
-├── organoid/                         # bundled substrate for bridge.py --organoid
+├── organoid/                         # substrate simulator for bridge.py --organoid
 │   ├── requirements.txt              # numpy, brian2 (cl-sdk installed separately)
 │   └── organoid_simulator/           # vendored LIF v1 + Brian2 v2 data sources
 ├── Tools/
-│   └── generate_bp_cl1gamestates.py  # editor-python: builds BP_CL1GameStates
+│   └── generate_bp_cl1gamestates.py  
 └── UeCl1Api/
     ├── UeCl1Api.uplugin
     ├── Config/
