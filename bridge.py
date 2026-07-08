@@ -49,6 +49,14 @@ python3 bridge.py --replay-path /path/to/recording.h5 --accelerated-time
 
 # Custom random simulation parameters
 python3 bridge.py --simulator --sample-mean 200 --spike-percentile 99.9
+
+# Biocompute organoid substrate (stimulation-reactive; the real closed loop).
+# organoid_simulator ships in the plugin's ./organoid folder (the default
+# --organoid-path), so no clone is needed. First install its deps + the CL SDK:
+#   pip install -r organoid/requirements.txt   # numpy, brian2
+#   pip install /path/to/cl-sdk                # Cortical Labs `cl` (CC BY-NC 4.0)
+python3 bridge.py --organoid --control-listen-port 12346 --random-seed 42
+python3 bridge.py --organoid --organoid-source brian --organoid-neurons 64
 """
 
 import argparse
@@ -438,6 +446,29 @@ def run_bridge(args):
 
     import cl  # lazy import so --selftest works without the SDK
 
+    # Organoid substrate (biocompute cl1-callosum-biocompute): swap the SDK's
+    # default RandomDataSource for a stimulation-reactive network, so UE stim on
+    # a band electrode actually evokes spikes in that band (the closed loop).
+    if args.organoid:
+        if args.organoid_path:
+            sys.path.insert(0, os.path.abspath(args.organoid_path))
+        if args.organoid_source == "brian":
+            spec = "organoid_simulator.v2.brian_source:make_brian_source"
+            config = {"n_neurons": args.organoid_neurons}
+        else:
+            spec = "organoid_simulator.lif_data_source:make_lif_source"
+            config = {}
+        if args.random_seed is not None:
+            config["random_seed"] = args.random_seed
+        try:
+            cl.sim.set_simulator_data_source(spec, config=config)
+        except Exception as e:
+            print(f"[bridge] failed to set organoid data source ({spec}): {e}\n"
+                  f"[bridge] ensure the biocompute repo is importable, e.g. "
+                  f"--organoid-path /path/to/cl1-callosum-biocompute", file=sys.stderr)
+            return
+        print(f"[bridge] organoid substrate: {spec} config={config}", file=sys.stderr)
+
     envelope = SafetyEnvelope(
         max_amp_uA=args.max_amp, min_pw_us=args.min_pw, max_pw_us=args.max_pw,
         max_pulses=args.max_pulses, min_freq=args.min_freq, max_freq=args.max_freq,
@@ -564,6 +595,19 @@ def build_parser():
                    help="Enable accelerated (non-wall-clock) time in simulator")
     p.add_argument("--disable-visualisation", action="store_true",
                    help="Disable WebSocket visualization server in simulator")
+    # Organoid substrate (biocompute LIF/Brian data source)
+    p.add_argument("--organoid", action="store_true",
+                   help="Use the biocompute organoid simulator as the CL SDK data "
+                        "source (stimulation-reactive; the real closed loop)")
+    p.add_argument("--organoid-source", choices=["lif", "brian"], default="lif",
+                   help="Organoid substrate: lif (v1, fast) or brian (v2, biophysical)")
+    p.add_argument("--organoid-neurons", type=int, default=64,
+                   help="Neuron count for the brian (v2) source")
+    default_organoid = os.path.join(os.path.dirname(os.path.abspath(__file__)), "organoid")
+    p.add_argument("--organoid-path", type=str, default=default_organoid,
+                   help="Directory containing the organoid_simulator package, "
+                        "prepended to sys.path (default: the plugin's bundled "
+                        "./organoid folder)")
     # Self-test
     p.add_argument("--selftest", action="store_true")
     p.add_argument("--selftest-rate", type=float, default=5.0)

@@ -19,7 +19,7 @@ spike firehose and the stimulation design outlined in §6 of [*CL API*](https://
 | File | Runs on | Role |
 |------|---------|------|
 | `bridge.py` | CL1 / SDK bridge (or `--selftest` anywhere) | (1) runs `neurons.loop`, streams spikes <br/>(2) `apply_command` applies control packets onto CL1 |
-| `UeCl1Api/` | Unreal Engine | **UCl1BridgeSubsystem** — handles UDP bridge + Assembloid Agency API<br/>(1) **Connection**: `StartReceiver`, `StopReceiver`, `ConfigureControlTarget`<br/>(2) **Stimulation**: `SendStimulation`, `SendStimPlan`, `SendRewardSignal`, `InterruptStim`<br/>(3) **Recording**: `RecordSessionData`, `ExportToCSV` (CL1-side HDF5 + UE CSV)<br/>(4) **Readback**: `GetSpikeResponse`, `GetSpikeRateHz`, `GetChannelRates`<br/>(5) **Events**: `OnSpike`, `OnSpikeInChannel`, `OnSpikeBatch` (C++ & Blueprint) |
+| `UeCl1Api/` | Unreal Engine | **UCl1BridgeSubsystem** — handles UDP bridge + Assembloid Agency API<br/>(1) **Connection**: `StartReceiver`, `StopReceiver`, `ConfigureControlTarget`<br/>(2) **Stimulation**: `SendStimulation`, `SendStimPlan`, `SendRewardSignal`, `InterruptStim`<br/>(3) **Recording**: `RecordSessionData`, `ExportToCSV` (CL1-side HDF5 + UE CSV)<br/>(4) **Readback**: `GetSpikeResponse`, `GetSpikeRateHz`, `GetChannelRates`<br/>(5) **Events**: `OnSpike`, `OnSpikeInChannel`, `OnSpikeBatch` (C++ & Blueprint)<br/>(6) **Game states** `DecodeState`, `EncodeState`|
 
 ## Assembloid API (C++ & Blueprint)
 ### Functionality
@@ -108,6 +108,69 @@ In `UE-CL1-API` folder, you will find `\Blueprints\BP_CL1BridgeManager.uasset` w
 
 
 
+## Game-state codec (control a pawn)
+
+The codec is implemented by `UCl1GameStates` in
+`UeCl1Api/Source/UeCl1Api/Public/Cl1GameStates.h` and
+`UeCl1Api/Source/UeCl1Api/Private/Cl1GameStates.cpp`. It ports the
+biocompute closed loop (`cl1-callosum-biocompute`:
+`models.encoders.SymbolToFixedChannelEncoder` +
+`models.decoders.LinearArgmaxDecoder`, wired live in `classify_server.py`) onto
+this bridge and translates **four game states ⇄ CL1 activity** in both
+directions:
+
+- `CL1GameStates` = `UeCl1Api/Source/UeCl1Api/Public/Cl1GameStates.h` — the
+  component we added. `DecodeState()` calls `subsystem.GetChannelRates()`, pools
+  the recent rates into 4 spatial bands, applies an argmax to pick the winning
+  state, and (when `bAutoDecode` is enabled) broadcasts `OnStateDecoded`.
+  `EncodeState()` calls `subsystem.SendStimulation()` to stimulate the electrode
+  mapped for the selected state.
+- `BP_CL1GameStates` = your Blueprint asset — it owns the codec component,
+  binds `OnStateDecoded` to pawn movement or other gameplay logic, and calls
+  `EncodeState()` when gameplay input selects a direction.
+
+- **Encode** (state → stimulation): each state is pinned to one fixed electrode
+  and stimulated with a fixed biphasic burst — *identity in signal, diversity in
+  channel*.
+- **Decode** (spikes → state): the 64 channels pool into 4 spatial column-bands
+  (`band = channel*4/64 = channel/16` on an 8×8 MEA); the band with the highest
+  summed firing rate wins (`argmax`) — the weightless `LinearArgmaxDecoder`
+  read-out. Confidence is the softmax over the four bands.
+
+Default mapping (edit `ClassElectrodes` to remap):
+
+| State (index) | Encode electrode | Decode band (channels) |
+|---|---|---|
+| `Up` (0)    | 10 | band 0 (0–15) |
+| `Down` (1)  | 26 | band 1 (16–31) |
+| `Left` (2)  | 42 | band 2 (32–47) |
+| `Right` (3) | 50 | band 3 (48–63) |
+
+### C++
+```cpp
+// Add the component to a pawn (or Add Component in Blueprint).
+UCl1GameStates* Codec = GetComponentByClass<UCl1GameStates>();
+
+// Encode: stimulate the electrode for a state.
+Codec->EncodeState(ECl1GameState::Left);
+
+// Decode on demand: pool recent spikes -> winning state + confidence.
+FCl1DecodeResult R;
+if (Codec->DecodeState(R) && R.Confidence > 0.5f)
+{
+    MovePawn(R.State);   // R.BandScores holds the 4 per-band rates
+}
+```
+
+### Blueprint
+1. `StartReceiver` + `ConfigureControlTarget` on the `CL1BridgeSubsystem` (as above).
+2. Add the `CL1 Game States` component to your pawn, or use `BP_CL1GameStates`
+   as a Blueprint wrapper that owns the component.
+3. **Game → neurons:** on input, call `Encode State` with the direction.
+4. **Neurons → game:** enable `bAutoDecode` on the component, bind `On State
+   Decoded`, and drive the pawn from `Result.State` (gate on `Result.Confidence`
+   via `MinConfidence`). Or call `Decode State` manually each frame.
+
 ## Running
 
 ```bash
@@ -128,7 +191,36 @@ python3 bridge.py --replay-path /path/to/recording.h5 --accelerated-time
 
   # Custom random simulation parameters
 python3 bridge.py --simulator --sample-mean 200 --spike-percentile 99.9
+
+# 4. Biocompute organoid substrate (stimulation-reactive; the real closed loop).
+#    organoid_simulator is BUNDLED in the plugin's ./organoid folder (no clone).
+#    Install its deps first (see "Bundled organoid simulator" below).
+python3 bridge.py --organoid --control-listen-port 12346 \
+        --ue-host 127.0.0.1 --ue-port 12345 --random-seed 42
+  # v2 biophysical (Brian2) substrate instead of the fast LIF default:
+python3 bridge.py --organoid --organoid-source brian --organoid-neurons 64
 ```
+
+### Bundled organoid simulator
+
+The `organoid_simulator` package (the LIF v1 and Brian2 v2 stimulation-reactive
+substrates) is **bundled in this plugin at `organoid/`**, so `--organoid` works
+out of the box — no repo to clone, no path to pass.
+
+You only need to install the Python dependencies once, into the interpreter that
+runs `bridge.py`:
+
+```bash
+pip install -r organoid/requirements.txt      # numpy, brian2
+```
+
+`organoid/requirements.txt` lists everything and documents the one piece that
+can't be bundled: the Cortical Labs CL SDK (the `cl` module). It is third-party
+(Cortical Labs, CC BY-NC 4.0, not on PyPI), so obtain it from Cortical Labs and
+`pip install /path/to/cl-sdk`.
+
+`--selftest`, `--simulator`, and `--replay-path` need none of this — only
+`--organoid` does.
 
 The safety envelope (Assembloid §5) rejects-and-drops out-of-range commands
 (amplitude, pulse width, pulse count, frequency, channel) — it never silently
@@ -173,12 +265,19 @@ UE only sees UDP, so the same plugin drives a CL1 (via `bridge.py`) or an equiva
 SNN / EEG stand-in that uses the same firehose + AA convention, identical
 state/reward mappings across substrates. This will hopefully be easy to integrate with other biocomputing platforms.
 
+
+
 ## Files
 
 ```
 UE-CL1-API/
 ├── bridge.py
 ├── README.md
+├── organoid/                         # bundled substrate for bridge.py --organoid
+│   ├── requirements.txt              # numpy, brian2 (cl-sdk installed separately)
+│   └── organoid_simulator/           # vendored LIF v1 + Brian2 v2 data sources
+├── Tools/
+│   └── generate_bp_cl1gamestates.py  # editor-python: builds BP_CL1GameStates
 └── UeCl1Api/
     ├── UeCl1Api.uplugin
     ├── Config/
@@ -193,9 +292,11 @@ UE-CL1-API/
             ├── Private/
             │   ├── Cl1BridgeLibrary.cpp
             │   ├── Cl1BridgeSubsystem.cpp
+            │   ├── Cl1GameStates.cpp
             │   └── UeCl1Api.cpp
             └── Public/
                 ├── Cl1BridgeLibrary.h
                 ├── Cl1BridgeSubsystem.h
+                ├── Cl1GameStates.h
                 └── Cl1SpikeTypes.h
 ```

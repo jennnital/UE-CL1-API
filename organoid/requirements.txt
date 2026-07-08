@@ -1,0 +1,13 @@
+# Python dependencies for  bridge.py --organoid
+# Install into the interpreter that runs bridge.py:  pip install -r requirements.txt
+#
+# These are native/compiled wheels, so they must be pip-installed (they cannot be
+# vendored as a folder like organoid_simulator/ is).
+numpy>=1.24
+brian2>=2.9        # only needed for  --organoid-source brian  (the v2 substrate)
+
+# NOT included here: the Cortical Labs CL SDK (the `cl` module).
+# organoid_simulator imports `cl.sim`, so bridge.py --organoid needs it installed.
+# It is third-party (Cortical Labs, CC BY-NC 4.0) and not on PyPI - obtain it from
+# Cortical Labs and install it, e.g.:  pip install /path/to/cl-sdk
+# (cl-sdk itself pulls in numpy, msgpack, msgpack_numpy, tables, websockets.)
